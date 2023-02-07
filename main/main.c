@@ -32,7 +32,7 @@ static void IRAM_ATTR gpio_isr_handler(void* arg)
     xQueueSendFromISR(gpio_evt_queue, &gpio_num, NULL);
 }
 
-static void gpio_task_example(void* arg)
+static void count_waterflow_pulse(void* arg)
 {
     uint32_t io_num;
     for(;;) {
@@ -51,7 +51,7 @@ static esp_err_t wateramount_get_handler(httpd_req_t *req)
 {
 	float wateramount = (5 / (float)3155) * count;
 	char resp[64];
-	int n = sprintf(resp, "Wassermenge: %.2f Liter", wateramount);
+	sprintf(resp, "Wassermenge: %.2f Liter", wateramount);
 	httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
 	return ESP_OK;
 }
@@ -74,10 +74,8 @@ static httpd_handle_t start_webserver(void)
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.lru_purge_enable = true;
 
-    // Start the httpd server
     ESP_LOGI(TAG, "Starting server on port: '%d'", config.server_port);
     if (httpd_start(&server, &config) == ESP_OK) {
-        // Set URI handlers
         ESP_LOGI(TAG, "Registering URI handlers");
         httpd_register_uri_handler(server, &wateramount);
         return server;
@@ -85,12 +83,6 @@ static httpd_handle_t start_webserver(void)
 
     ESP_LOGI(TAG, "Error starting server!");
     return NULL;
-}
-
-static void stop_webserver(httpd_handle_t server)
-{
-    // Stop the httpd server
-    httpd_stop(server);
 }
 
 static void connect_handler(void* arg, esp_event_base_t event_base,
@@ -103,15 +95,12 @@ static void connect_handler(void* arg, esp_event_base_t event_base,
     }
 }
 
-/* The examples use WiFi configuration that you can set via project configuration menu.
+// wifi
 
-   If you'd rather not, just change the below entries to strings with
-   the config you want - ie #define EXAMPLE_WIFI_SSID "mywifissid"
-*/
-#define EXAMPLE_ESP_WIFI_SSID      CONFIG_ESP_WIFI_SSID
-#define EXAMPLE_ESP_WIFI_PASS      CONFIG_ESP_WIFI_PASSWORD
-#define EXAMPLE_ESP_WIFI_CHANNEL   CONFIG_ESP_WIFI_CHANNEL
-#define EXAMPLE_MAX_STA_CONN       CONFIG_ESP_MAX_STA_CONN
+#define ESP_WIFI_SSID      CONFIG_ESP_WIFI_SSID
+#define ESP_WIFI_PASS      CONFIG_ESP_WIFI_PASSWORD
+#define ESP_WIFI_CHANNEL   CONFIG_ESP_WIFI_CHANNEL
+#define MAX_STA_CONN       CONFIG_ESP_MAX_STA_CONN
 
 static void wifi_event_handler(void* arg, esp_event_base_t event_base,
                                     int32_t event_id, void* event_data)
@@ -144,15 +133,15 @@ void wifi_init_softap(void)
 
     wifi_config_t wifi_config = {
         .ap = {
-            .ssid = EXAMPLE_ESP_WIFI_SSID,
-            .ssid_len = strlen(EXAMPLE_ESP_WIFI_SSID),
-            .channel = EXAMPLE_ESP_WIFI_CHANNEL,
-            .password = EXAMPLE_ESP_WIFI_PASS,
-            .max_connection = EXAMPLE_MAX_STA_CONN,
+            .ssid = ESP_WIFI_SSID,
+            .ssid_len = strlen(ESP_WIFI_SSID),
+            .channel = ESP_WIFI_CHANNEL,
+            .password = ESP_WIFI_PASS,
+            .max_connection = MAX_STA_CONN,
             .authmode = WIFI_AUTH_WPA_WPA2_PSK
         },
     };
-    if (strlen(EXAMPLE_ESP_WIFI_PASS) == 0) {
+    if (strlen(ESP_WIFI_PASS) == 0) {
         wifi_config.ap.authmode = WIFI_AUTH_OPEN;
     }
 
@@ -161,39 +150,28 @@ void wifi_init_softap(void)
     ESP_ERROR_CHECK(esp_wifi_start());
 
     ESP_LOGI(TAG, "wifi_init_softap finished. SSID:%s password:%s channel:%d",
-             EXAMPLE_ESP_WIFI_SSID, EXAMPLE_ESP_WIFI_PASS, EXAMPLE_ESP_WIFI_CHANNEL);
+             ESP_WIFI_SSID, ESP_WIFI_PASS, ESP_WIFI_CHANNEL);
 }
 
 void app_main(void)
 {
-	//zero-initialize the config structure.
-	    gpio_config_t io_conf = {};
-	    //interrupt of rising edge
-	    io_conf.intr_type = GPIO_INTR_POSEDGE;
-	    //bit mask of the pins, use GPIO4/5 here
-	    io_conf.pin_bit_mask = GPIO_INPUT_PIN_SEL;
-	    //set as input mode
-	    io_conf.mode = GPIO_MODE_INPUT;
-	    //enable pull-up mode
-	    io_conf.pull_up_en = 1;
-	    gpio_config(&io_conf);
+	gpio_config_t io_conf = {};
+	io_conf.intr_type = GPIO_INTR_POSEDGE;
+	io_conf.pin_bit_mask = GPIO_INPUT_PIN_SEL;
+	io_conf.mode = GPIO_MODE_INPUT;
+	io_conf.pull_up_en = 1;
+	gpio_config(&io_conf);
 
-	    //change gpio interrupt type for one pin
-	    gpio_set_intr_type(GPIO_FLOW_PULSE, GPIO_INTR_POSEDGE);
+	gpio_set_intr_type(GPIO_FLOW_PULSE, GPIO_INTR_POSEDGE);
 
-	    //create a queue to handle gpio event from isr
-	    gpio_evt_queue = xQueueCreate(10, sizeof(uint32_t));
-	    //start gpio task
-	    xTaskCreate(gpio_task_example, "gpio_task_example", 2048, NULL, 10, NULL);
+	gpio_evt_queue = xQueueCreate(1000, sizeof(uint32_t));
+	xTaskCreate(count_waterflow_pulse, "count_waterflow_pulse", 2048, NULL, 10, NULL);
 
-	    //install gpio isr service
-	    gpio_install_isr_service(ESP_INTR_FLAG_DEFAULT);
-	    //hook isr handler for specific gpio pin
-	    gpio_isr_handler_add(GPIO_FLOW_PULSE, gpio_isr_handler, (void*) GPIO_FLOW_PULSE); /////////////
+	gpio_install_isr_service(ESP_INTR_FLAG_DEFAULT);
+	gpio_isr_handler_add(GPIO_FLOW_PULSE, gpio_isr_handler, (void*) GPIO_FLOW_PULSE);
 
 	static httpd_handle_t server = NULL;
 
-    //Initialize NVS
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
       ESP_ERROR_CHECK(nvs_flash_erase());
@@ -207,5 +185,4 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_netif_init());
 
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_AP_STAIPASSIGNED, &connect_handler, &server));
-//    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, &disconnect_handler, &server));
 }
